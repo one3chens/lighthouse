@@ -15,6 +15,9 @@ const Node = require('../gather/computed/dependency-graph/node.js');
 const SCORING_POINT_OF_DIMINISHING_RETURNS = 1700;
 const SCORING_MEDIAN = 10000;
 
+// Any CPU task of 20 ms or more will end up being a critical long task on mobile
+const CRITICAL_LONG_TASK_THRESHOLD = 20000;
+
 class PredictivePerf extends Audit {
   /**
    * @return {!AuditMeta}
@@ -38,8 +41,7 @@ class PredictivePerf extends Audit {
     const fmp = traceOfTab.timestamps.firstMeaningfulPaint;
     return graph.cloneWithRelationships(node => {
       if (node.endTime > fmp) return false;
-      if (node.type !== Node.TYPES.NETWORK) return true;
-      return node.record.priority() === 'VeryHigh'; // proxy for render-blocking
+      return node.isRenderBlocking();
     });
   }
 
@@ -51,7 +53,11 @@ class PredictivePerf extends Audit {
   static getPessimisticFMPGraph(graph, traceOfTab) {
     const fmp = traceOfTab.timestamps.firstMeaningfulPaint;
     return graph.cloneWithRelationships(node => {
-      return node.endTime <= fmp;
+      if (node.endTime > fmp) return false;
+      // Include CPU tasks that performed a layout
+      if (node.type === Node.TYPES.CPU) return node.didPerformLayout();
+      // Include every request before FMP that wasn't an image
+      return node.resourceType !== 'image';
     });
   }
 
@@ -61,7 +67,10 @@ class PredictivePerf extends Audit {
    */
   static getOptimisticTTCIGraph(graph) {
     return graph.cloneWithRelationships(node => {
-      return node.record._resourceType && node.record._resourceType._name === 'script' ||
+      // Include everything that might be a long task
+      if (node.type === Node.TYPES.CPU) return node.event.dur > CRITICAL_LONG_TASK_THRESHOLD;
+      // Include all scripts and high priority requests
+      return node.resourceType === 'script' ||
           node.record.priority() === 'High' ||
           node.record.priority() === 'VeryHigh';
     });
@@ -73,6 +82,18 @@ class PredictivePerf extends Audit {
    */
   static getPessimisticTTCIGraph(graph) {
     return graph;
+  }
+
+  /**
+   * @param {!Map<!Node, {startTime, endTime}>} nodeAuxData
+   * @return {number}
+   */
+  static getLastLongTaskEndTime(nodeAuxData) {
+    return Array.from(nodeAuxData.entries())
+        .filter(([node, auxData]) => node.type === Node.TYPES.CPU &&
+            auxData.endTime - auxData.startTime > 50)
+        .map(([_, auxData]) => auxData.endTime)
+        .reduce((max, x) => Math.max(max, x), 0);
   }
 
   /**
@@ -96,7 +117,22 @@ class PredictivePerf extends Audit {
       let sum = 0;
       const values = {};
       Object.keys(graphs).forEach(key => {
-        values[key] = PageDependencyGraph.computeGraphDuration(graphs[key]);
+        const estimate = PageDependencyGraph.estimateGraph(graphs[key]);
+        const lastLongTaskEnd = PredictivePerf.getLastLongTaskEndTime(estimate.nodeAuxiliaryData);
+
+        switch (key) {
+          case 'optimisticFMP':
+          case 'pessimisticFMP':
+            values[key] = estimate.timeInMs;
+            break;
+          case 'optimisticTTCI':
+            values[key] = Math.max(values.optimisticFMP, lastLongTaskEnd);
+            break;
+          case 'pessimisticTTCI':
+            values[key] = Math.max(values.pessimisticFMP, lastLongTaskEnd);
+            break;
+        }
+
         sum += values[key];
       });
 

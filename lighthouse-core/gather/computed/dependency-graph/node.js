@@ -44,12 +44,18 @@ class Node {
   }
 
   /**
+   * @return {boolean}
+   */
+  isRenderBlocking() {
+    return false;
+  }
+
+  /**
    * @return {!Array<!Node>}
    */
   getDependents() {
     return this._dependents.slice();
   }
-
 
   /**
    * @return {!Array<!Node>}
@@ -58,6 +64,12 @@ class Node {
     return this._dependencies.slice();
   }
 
+  /**
+   * @return {number}
+   */
+  getNumberOfDependencies() {
+    return this._dependencies.length;
+  }
 
   /**
    * @return {!Node}
@@ -94,6 +106,14 @@ class Node {
 
     node._dependents.push(this);
     this._dependencies.push(node);
+  }
+
+  /**
+   * @param {!Node}
+   * @return {boolean}
+   */
+  hasDependency(node) {
+    return this._dependencies.includes(node);
   }
 
   /**
@@ -199,6 +219,7 @@ class Node {
 Node.TYPES = {
   UNKNOWN: 'unknown',
   NETWORK: 'network',
+  CPU: 'cpu',
 };
 
 module.exports = Node;
