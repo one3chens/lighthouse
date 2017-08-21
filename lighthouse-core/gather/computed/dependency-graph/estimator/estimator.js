@@ -84,6 +84,7 @@ class Estimator {
 
     for (const [connectionId, records] of recordsByConnection.entries()) {
       const isSsl = records[0].parsedURL.scheme === 'https';
+      const isH2 = records[0].protocol === 'h2';
       let responseTime = records.reduce(
         (min, record) => Math.min(min, Estimator.getResponseTime(record)),
         Infinity
@@ -93,7 +94,7 @@ class Estimator {
         responseTime = this._defaultResponseTime;
       }
 
-      const connection = new TcpConnection(this._rtt, this._throughput, responseTime, isSsl);
+      const connection = new TcpConnection(this._rtt, this._throughput, responseTime, isSsl, isH2);
 
       connections.set(connectionId, connection);
     }
@@ -283,6 +284,7 @@ class Estimator {
     );
 
     connection.setCongestionWindow(calculation.congestionWindow);
+    connection.setExtraBytesDownloaded(calculation.extraBytesDownloaded);
 
     if (isFinished) {
       connection.setWarmed(true);

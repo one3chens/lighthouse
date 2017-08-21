@@ -14,14 +14,17 @@ class TcpConnection {
    * @param {number} throughput
    * @param {number=} responseTime
    * @param {boolean=} ssl
+   * @param {boolean=} h2
    */
-  constructor(rtt, throughput, responseTime = 0, ssl = true) {
+  constructor(rtt, throughput, responseTime = 0, ssl = true, h2 = false) {
     this._warmed = false;
     this._ssl = ssl;
+    this._h2 = h2;
     this._rtt = rtt;
     this._availableThroughput = throughput;
     this._responseTime = responseTime;
     this._congestionWindow = INITIAL_CONGESTION_WINDOW;
+    this._overflowBytesDownloaded = 0;
   }
 
   /**
@@ -69,6 +72,14 @@ class TcpConnection {
   }
 
   /**
+   * @param {number} bytes
+   */
+  setExtraBytesDownloaded(bytes) {
+    if (!this._h2) return;
+    this._overflowBytesDownloaded = bytes;
+  }
+
+  /**
    * Simulates a network download of a particular number of bytes over an optional maximum amount of time
    * and returns information about the ending state.
    *
@@ -80,7 +91,15 @@ class TcpConnection {
    * @param {number=} maximumTimeToElapse
    * @return {{timeElapsed: number, roundTrips: number, bytesDownloaded: number, congestionWindow: number}}
    */
-  calculateTimeToDownload(bytesToDownload, timeAlreadyElapsed = 0, maximumTimeToElapse = Infinity) {
+  calculateTimeToDownload(
+    bytesToDownload,
+    timeAlreadyElapsed = 0,
+    maximumTimeToElapse = Infinity
+  ) {
+    if (this._warmed && this._h2) {
+      bytesToDownload -= this._overflowBytesDownloaded;
+    }
+
     const twoWayLatency = this._rtt;
     const oneWayLatency = twoWayLatency / 2;
     const maximumCongestionWindow = this._computeMaximumCongestionWindowInSegments();
@@ -99,46 +118,41 @@ class TcpConnection {
     }
 
     let roundTrips = Math.ceil(handshakeAndRequest / twoWayLatency);
-    const timeToFirstByte = handshakeAndRequest + this._responseTime + oneWayLatency;
+    let timeToFirstByte = handshakeAndRequest + this._responseTime + oneWayLatency;
+    if (this._warmed && this._h2) timeToFirstByte = 0;
+
     const timeElapsedForTTFB = Math.max(timeToFirstByte - timeAlreadyElapsed, 0);
     const maximumDownloadTimeToElapse = maximumTimeToElapse - timeElapsedForTTFB;
 
     let congestionWindow = Math.min(this._congestionWindow, maximumCongestionWindow);
-    let bytesDownloaded = 0;
+    let totalBytesDownloaded = 0;
     if (timeElapsedForTTFB > 0) {
-      bytesDownloaded = congestionWindow * TCP_SEGMENT_SIZE;
+      totalBytesDownloaded = congestionWindow * TCP_SEGMENT_SIZE;
     } else {
       roundTrips = 0;
     }
 
     let downloadTimeElapsed = 0;
-    let bytesRemaining = bytesToDownload - bytesDownloaded;
+    let bytesRemaining = bytesToDownload - totalBytesDownloaded;
     while (bytesRemaining > 0 && downloadTimeElapsed <= maximumDownloadTimeToElapse) {
       roundTrips++;
       downloadTimeElapsed += twoWayLatency;
       congestionWindow = Math.max(Math.min(maximumCongestionWindow, congestionWindow * 2), 1);
 
       const bytesDownloadedInWindow = congestionWindow * TCP_SEGMENT_SIZE;
-      bytesDownloaded += bytesDownloadedInWindow;
+      totalBytesDownloaded += bytesDownloadedInWindow;
       bytesRemaining -= bytesDownloadedInWindow;
     }
 
     const timeElapsed = timeElapsedForTTFB + downloadTimeElapsed;
-    bytesDownloaded = Math.min(bytesDownloaded, bytesToDownload);
-
-    if (Number.isFinite(maximumTimeToElapse)) {
-      return {
-        roundTrips,
-        timeElapsed,
-        bytesDownloaded,
-        congestionWindow,
-      };
-    }
+    const extraBytesDownloaded = this._h2 ? Math.max(totalBytesDownloaded - bytesToDownload, 0) : 0;
+    const bytesDownloaded = Math.max(Math.min(totalBytesDownloaded, bytesToDownload), 0);
 
     return {
       roundTrips,
       timeElapsed,
       bytesDownloaded,
+      extraBytesDownloaded,
       congestionWindow,
     };
   }
