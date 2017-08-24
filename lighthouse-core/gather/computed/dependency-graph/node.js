@@ -44,13 +44,6 @@ class Node {
   }
 
   /**
-   * @return {boolean}
-   */
-  isRenderBlocking() {
-    return false;
-  }
-
-  /**
    * @return {!Array<!Node>}
    */
   getDependents() {
