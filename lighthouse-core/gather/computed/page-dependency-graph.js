@@ -11,7 +11,10 @@ const CPUNode = require('./dependency-graph/cpu-node');
 const GraphEstimator = require('./dependency-graph/estimator/estimator');
 const TracingProcessor = require('../../lib/traces/tracing-processor');
 
-const MINIMUM_TASK_DURATION = 10 * 1000;
+// tasks shorter than 10 ms are unlikely have a significant impact
+const MINIMUM_TASK_DURATION = 10000;
+// video files tend to be enormous and throw off all graph traversals
+const IGNORED_MIME_TYPES_REGEX = /^video/;
 
 class PageDependencyGraphArtifact extends ComputedArtifact {
   get name() {
@@ -47,6 +50,7 @@ class PageDependencyGraphArtifact extends ComputedArtifact {
     const urlToNodeMap = new Map();
 
     networkRecords.forEach(record => {
+      if (IGNORED_MIME_TYPES_REGEX.test(record.mimeType)) return;
       const node = new NetworkNode(record);
       nodes.push(node);
       idToNodeMap.set(record.requestId, node);

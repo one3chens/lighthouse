@@ -10,10 +10,18 @@ const TcpConnection = require('./tcp-connection');
 
 // see https://cs.chromium.org/search/?q=kDefaultMaxNumDelayableRequestsPerClient&sq=package:chromium&type=cs
 const DEFAULT_MAXIMUM_CONCURRENT_REQUESTS = 10;
+
+// Fast 3G emulation target from DevTools, WPT 3G - Fast setting
 const DEFAULT_RESPONSE_TIME = 30;
 const DEFAULT_RTT = 150;
 const DEFAULT_THROUGHPUT = 1600 * 1024; // 1.6 Mbps
-const DEFAULT_CPU_MULTIPLIER = 5;
+
+// same multiplier as Lighthouse uses for CPU emulation
+const DEFAULT_CPU_TASK_MULTIPLIER = 4;
+// layout tasks tend to be less CPU-bound and do not experience the same increase in duration
+const DEFAULT_LAYOUT_TASK_MULTIPLIER = 2;
+// if a task takes more than 10 seconds it's usually a sign it isn't actually CPU bound and we're over estimating
+const DEFAULT_MAXIMUM_CPU_TASK_DURATION = 10000;
 
 function groupBy(items, keyFunc) {
   const grouped = new Map();
@@ -41,7 +49,8 @@ class Estimator {
         throughput: DEFAULT_THROUGHPUT,
         defaultResponseTime: DEFAULT_RESPONSE_TIME,
         maximumConcurrentRequests: DEFAULT_MAXIMUM_CONCURRENT_REQUESTS,
-        cpuMultiplier: DEFAULT_CPU_MULTIPLIER,
+        cpuTaskMultiplier: DEFAULT_CPU_TASK_MULTIPLIER,
+        layoutTaskMultiplier: DEFAULT_LAYOUT_TASK_MULTIPLIER,
       },
       options
     );
@@ -53,7 +62,8 @@ class Estimator {
       TcpConnection.maximumSaturatedConnections(this._rtt, this._throughput),
       this._options.maximumConcurrentRequests
     );
-    this._cpuMultiplier = this._options.cpuMultiplier;
+    this._cpuTaskMultiplier = this._options.cpuTaskMultiplier;
+    this._layoutTaskMultiplier = this._options.layoutTaskMultiplier;
   }
 
   /**
@@ -227,7 +237,13 @@ class Estimator {
   _estimateTimeRemaining(node) {
     if (node.type === Node.TYPES.CPU) {
       const auxData = this._nodeAuxiliaryData.get(node);
-      const totalDuration = Math.round(node.event.dur / 1000 * this._cpuMultiplier);
+      const multiplier = node.didPerformLayout()
+        ? this._layoutTaskMultiplier
+        : this._cpuTaskMultiplier;
+      const totalDuration = Math.min(
+        Math.round(node.event.dur / 1000 * multiplier),
+        DEFAULT_MAXIMUM_CPU_TASK_DURATION
+      );
       const estimatedTimeElapsed = totalDuration - auxData.timeElapsed;
       this._setAuxData(node, {estimatedTimeElapsed});
       return estimatedTimeElapsed;
