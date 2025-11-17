@@ -74,7 +74,7 @@
   },
   "dependencies": {
     "axe-core": "2.2.1",
-    "chrome-devtools-frontend": "1.0.422034",
+    "chrome-devtools-frontend": "1.0.1510180",
     "devtools-timeline-model": "1.1.6",
     "jpeg-js": "0.1.2",
     "json-stringify-safe": "5.0.1",
